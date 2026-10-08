@@ -11,10 +11,11 @@ HEADERS = {"X-Tabarc-Local": "1"}
 def test_rejects_unapproved_and_cross_origin_requests(tmp_path):
     root = tmp_path / "movies"
     root.mkdir()
-    with TestClient(create_app(tmp_path / "data")) as client:
+    with TestClient(create_app(tmp_path / "data"), base_url="http://localhost") as client:
         payload = {"name": "Films", "root": str(root), "media_types": ["films"],
                    "applications": ["plex", "jellyfin"], "scan_profile": "quiet"}
         assert client.post("/api/libraries", json=payload).status_code == 403
+        assert client.get("/api/status", headers={"Host": "attacker.example"}).status_code == 400
         assert client.post("/api/libraries", json=payload,
                            headers={**HEADERS, "Origin": "https://strange.example"}).status_code == 403
         result = client.post("/api/libraries", json=payload, headers=HEADERS)
@@ -29,7 +30,7 @@ def test_scan_and_preview_does_not_change_files(tmp_path):
     root.mkdir()
     movie = root / "Arrival.2016.1080p.BluRay.mkv"
     movie.write_bytes(b"pretend video data")
-    with TestClient(create_app(tmp_path / "data")) as client:
+    with TestClient(create_app(tmp_path / "data"), base_url="http://localhost") as client:
         response = client.post("/api/libraries", json={
             "name": "Movies", "root": str(root), "media_types": ["films"],
             "applications": ["plex"]
@@ -48,6 +49,7 @@ def test_scan_and_preview_does_not_change_files(tmp_path):
         assert result["state"] == "completed"
         files = client.get(f"/api/libraries/{lib}/files").json()
         assert len(files) == 1
+        assert client.get(f"/api/libraries/{lib}/files?offset=1").json() == []
         proposals = client.get(f"/api/libraries/{lib}/proposals").json()
         assert proposals["mode"] == "preview_only"
         assert proposals["proposals"][0]["suggested_name"] == "Arrival (2016).mkv"
