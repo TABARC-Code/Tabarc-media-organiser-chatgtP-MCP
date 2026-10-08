@@ -1,6 +1,7 @@
 """SQLite catalogue. Media itself is never written by this module."""
 
 import json
+import os
 from contextlib import contextmanager
 import sqlite3
 import threading
@@ -45,7 +46,9 @@ class Catalogue:
                     applications TEXT NOT NULL,
                     scan_profile TEXT NOT NULL DEFAULT 'balanced',
                     added_at REAL NOT NULL,
-                    last_scan_at REAL
+                    last_scan_at REAL,
+                    root_device INTEGER,
+                    root_inode INTEGER
                 );
                 CREATE TABLE IF NOT EXISTS files (
                     id INTEGER PRIMARY KEY, library_id INTEGER NOT NULL
@@ -69,6 +72,12 @@ class Catalogue:
                 row["name"] for row in db.execute("PRAGMA table_info(libraries)")
             }:
                 db.execute("ALTER TABLE libraries ADD COLUMN scan_profile TEXT NOT NULL DEFAULT 'balanced'")
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(libraries)")}
+            for column in ("root_device", "root_inode"):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE libraries ADD COLUMN {column} INTEGER")
+            # Legacy roots haven't been checked against a stored identity yet.
+            # Their first full scan can establish one without pruning old rows.
             # A process can disappear mid-scan. The next start can resume safely
             # by rescanning; untouched files remain in the catalogue.
             db.execute("UPDATE jobs SET state='paused', message='Interrupted on restart' WHERE state='running'")
@@ -111,6 +120,9 @@ class Catalogue:
         if not root.is_absolute() or root.is_symlink() or not root.is_dir():
             raise ValueError("Choose an existing, absolute directory (not a symbolic link).")
         root = root.resolve(strict=True)
+        root_stat = root.stat()
+        if not root.is_dir():
+            raise ValueError("The media root must be a directory.")
         if self.directory == root or self.directory.is_relative_to(root) or root.is_relative_to(self.directory):
             raise ValueError("The catalogue directory cannot be inside the media root, or vice versa.")
         if not name.strip() or len(name) > 100:
@@ -128,9 +140,11 @@ class Catalogue:
         try:
             with self.write_lock, self.connect() as db:
                 cursor = db.execute(
-                    "INSERT INTO libraries(name,root,media_types,applications,scan_profile,added_at) VALUES(?,?,?,?,?,?)",
+                    """INSERT INTO libraries(name,root,media_types,applications,scan_profile,
+                       added_at,root_device,root_inode) VALUES(?,?,?,?,?,?,?,?)""",
                     (name.strip(), str(root), json.dumps(sorted(set(media_types))),
-                     json.dumps(sorted(set(applications))), scan_profile, utc_now())
+                     json.dumps(sorted(set(applications))), scan_profile, utc_now(),
+                     root_stat.st_dev, root_stat.st_ino)
                 )
                 return cursor.lastrowid
         except sqlite3.IntegrityError as exc:
@@ -165,10 +179,25 @@ class Catalogue:
             db.execute(f"UPDATE jobs SET {', '.join(fields)} WHERE id=?",
                        (*args, job_id))
 
-    def upsert_batch(self, library_id: int, files: list[tuple[str, str, int, int, float]]):
+    def upsert_batch(self, library_id: int, files: list[tuple[str, str, int, int, float]]) -> int:
         if not files:
-            return
+            return 0
         with self.write_lock, self.connect() as db:
+            # Compare just this batch before updating timestamps. The UI needs
+            # to know what genuinely changed, not how often it was rescanned.
+            markers = ",".join("?" for _ in files)
+            previous = {
+                row["relative_path"]: (row["kind"], row["size"], row["mtime_ns"])
+                for row in db.execute(
+                    f"""SELECT relative_path,kind,size,mtime_ns FROM files
+                         WHERE library_id=? AND relative_path IN ({markers})""",
+                    (library_id, *(entry[0] for entry in files))
+                )
+            }
+            changed = sum(
+                previous.get(path) != (kind, size, mtime_ns)
+                for path, kind, size, mtime_ns, _ in files
+            )
             db.executemany(
                 """INSERT INTO files(library_id,relative_path,kind,size,mtime_ns,observed_at)
                    VALUES(?,?,?,?,?,?)
@@ -177,30 +206,43 @@ class Catalogue:
                       mtime_ns=excluded.mtime_ns,observed_at=excluded.observed_at""",
                 [(library_id, *f) for f in files]
             )
+        return changed
 
-    def finalise_scan(self, library_id: int, started: float):
+    def finalise_scan(self, library_id: int, started: float,
+                      root_device: int, root_inode: int, allow_prune: bool = True):
         # Only prune after a complete scan with no errors. Otherwise an offline
         # share would look rather convincingly like an empty library.
         with self.write_lock, self.connect() as db:
-            db.execute("DELETE FROM files WHERE library_id=? AND observed_at<?",
-                       (library_id, started))
-            db.execute("UPDATE libraries SET last_scan_at=? WHERE id=?",
-                       (utc_now(), library_id))
+            stored = db.execute(
+                "SELECT root_device,root_inode FROM libraries WHERE id=?", (library_id,)
+            ).fetchone()
+            if stored is None:
+                raise ValueError("Library no longer exists.")
+            recorded = (stored["root_device"], stored["root_inode"])
+            if recorded != (None, None) and recorded != (root_device, root_inode):
+                raise ValueError("Library root changed since registration; catalogue left untouched.")
+            if allow_prune and recorded != (None, None):
+                db.execute("DELETE FROM files WHERE library_id=? AND observed_at<?",
+                           (library_id, started))
+            db.execute(
+                """UPDATE libraries SET last_scan_at=?,root_device=?,root_inode=?
+                   WHERE id=?""", (utc_now(), root_device, root_inode, library_id)
+            )
 
-    def files(self, library_id: int, limit: int = 100, search: str = ""):
+    def files(self, library_id: int, limit: int = 100, search: str = "", offset: int = 0):
         with self.connect() as db:
             if search:
                 escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
                 rows = db.execute(
                     """SELECT relative_path,kind,size,mtime_ns FROM files
                        WHERE library_id=? AND relative_path LIKE ? ESCAPE '\\'
-                       ORDER BY relative_path LIMIT ?""",
-                    (library_id, f"%{escaped}%", limit)
+                       ORDER BY relative_path LIMIT ? OFFSET ?""",
+                    (library_id, f"%{escaped}%", limit, offset)
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "SELECT relative_path,kind,size,mtime_ns FROM files WHERE library_id=? ORDER BY relative_path LIMIT ?",
-                    (library_id, limit)
+                    "SELECT relative_path,kind,size,mtime_ns FROM files WHERE library_id=? ORDER BY relative_path LIMIT ? OFFSET ?",
+                    (library_id, limit, offset)
                 ).fetchall()
         return [dict(row) for row in rows]
 
