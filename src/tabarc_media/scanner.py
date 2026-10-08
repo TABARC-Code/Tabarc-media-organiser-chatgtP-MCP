@@ -93,14 +93,23 @@ class Scanner:
         delay = PROFILE_DELAY.get(library.get("scan_profile", "balanced"), 0.035)
 
         def flush():
-            nonlocal pending
+            nonlocal pending, changed
             if pending:
-                self.catalogue.upsert_batch(library["id"], pending)
+                changed += self.catalogue.upsert_batch(library["id"], pending)
                 pending = []
             self.catalogue.update_job(job_id, seen=seen, changed=changed,
                                       errors=errors, message=last_error)
 
         try:
+            # A mount or directory can be replaced between scans. Refuse to
+            # reconcile an unrelated tree against an established catalogue.
+            if root.is_symlink() or root.resolve(strict=True) != root or not root.is_dir():
+                raise ValueError("Library root is no longer the approved directory.")
+            initial = root.stat()
+            expected = (library["root_device"], library["root_inode"])
+            actual = (initial.st_dev, initial.st_ino)
+            if expected != (None, None) and actual != expected:
+                raise ValueError("Library root identity changed; rescan needs review.")
             stack = [root]
             while stack:
                 if self._pause.is_set():
@@ -131,7 +140,6 @@ class Scanner:
                                 pending.append((relative, kind,
                                                 stat.st_size, stat.st_mtime_ns, utc_now()))
                                 seen += 1
-                                changed += 1  # Indexed entries, not claims of altered media.
                                 if len(pending) >= BATCH:
                                     flush()
                                     time.sleep(delay)
@@ -148,7 +156,14 @@ class Scanner:
                 return
             flush()
             if errors == 0:
-                self.catalogue.finalise_scan(library["id"], started)
+                if root.is_symlink() or root.resolve(strict=True) != root:
+                    raise ValueError("Library root changed during the scan; no records pruned.")
+                final = root.stat()
+                if (final.st_dev, final.st_ino) != actual:
+                    raise ValueError("Library root changed during the scan; no records pruned.")
+                self.catalogue.finalise_scan(
+                    library["id"], started, *actual
+                )
             self.catalogue.update_job(
                 job_id, state="completed" if not errors else "completed_with_errors",
                 seen=seen, changed=changed, errors=errors, message=last_error
