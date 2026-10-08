@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field
 
 from .catalogue import Catalogue
@@ -75,6 +76,13 @@ def create_app(data_dir: Path | None = None):
                   docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.catalogue = store
     app.state.scanner = scanner
+    # Reject unexpected Host values before processing local API requests.
+    # Without this, DNS rebinding could defeat a localhost-only deployment.
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=["localhost", "127.0.0.1", "[::1]"],
+        www_redirect=False,
+    )
 
     @app.middleware("http")
     async def local_write_protection(request: Request, call_next):
@@ -123,10 +131,11 @@ def create_app(data_dir: Path | None = None):
 
     @app.get("/api/libraries/{library_id}/files")
     def list_files(library_id: int, limit: int = Query(100, ge=1, le=500),
-                   search: str = Query("", max_length=200)):
+                   search: str = Query("", max_length=200),
+                   offset: int = Query(0, ge=0, le=10_000_000)):
         if not store.library(library_id):
             raise HTTPException(404, "Library not found.")
-        return store.files(library_id, limit, search)
+        return store.files(library_id, limit, search, offset)
 
     @app.get("/api/libraries/{library_id}/proposals")
     def preview(library_id: int, limit: int = Query(100, ge=1, le=500)):
