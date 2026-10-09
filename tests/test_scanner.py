@@ -1,3 +1,4 @@
+import os
 import time
 
 from tabarc_media.catalogue import Catalogue
@@ -105,4 +106,29 @@ def test_changed_root_fails_without_pruning_index(tmp_path):
     assert {f["relative_path"] for f in store.files(lib)} == {"film.mkv"}
     assert "identity changed" in store.job(second)["message"]
     assert (original / "film.mkv").read_bytes() == b"original"
+    scanner.shutdown()
+
+
+def test_scan_error_does_not_prune_other_catalogue_rows(tmp_path, monkeypatch):
+    root = tmp_path / "library"
+    nested = root / "Season 01"
+    nested.mkdir(parents=True)
+    (nested / "old.mkv").write_bytes(b"previous")
+    store = Catalogue(tmp_path / "state")
+    lib = store.add_library("TV", root, ["television"], [])
+    scanner = Scanner(store)
+    first = scanner.start(lib)
+    assert wait_for(store, first, {"completed", "failed"}) == "completed"
+
+    real_scandir = os.scandir
+    def blocked_scandir(path):
+        if str(path) == str(nested):
+            raise PermissionError("Simulated unavailable share")
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", blocked_scandir)
+    second = scanner.start(lib)
+    assert wait_for(store, second, {"completed_with_errors", "failed"}) == "completed_with_errors"
+    assert {f["relative_path"] for f in store.files(lib)} == {"Season 01/old.mkv"}
+    assert (nested / "old.mkv").read_bytes() == b"previous"
     scanner.shutdown()
