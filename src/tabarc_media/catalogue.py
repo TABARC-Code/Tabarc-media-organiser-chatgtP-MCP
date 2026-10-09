@@ -47,7 +47,8 @@ class Catalogue:
                     added_at REAL NOT NULL,
                     last_scan_at REAL,
                     root_device INTEGER,
-                    root_inode INTEGER
+                    root_inode INTEGER,
+                    hold_prune INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS files (
                     id INTEGER PRIMARY KEY, library_id INTEGER NOT NULL
@@ -58,6 +59,17 @@ class Catalogue:
                     UNIQUE(library_id, relative_path)
                 );
                 CREATE INDEX IF NOT EXISTS files_library ON files(library_id);
+                CREATE TABLE IF NOT EXISTS root_events (
+                    id INTEGER PRIMARY KEY,
+                    library_id INTEGER NOT NULL REFERENCES libraries(id),
+                    previous_device INTEGER,
+                    previous_inode INTEGER,
+                    new_device INTEGER NOT NULL,
+                    new_inode INTEGER NOT NULL,
+                    confirmed_at REAL NOT NULL,
+                    reason TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS root_events_library ON root_events(library_id);
                 CREATE TABLE IF NOT EXISTS jobs (
                     id INTEGER PRIMARY KEY, library_id INTEGER NOT NULL,
                     state TEXT NOT NULL, seen INTEGER NOT NULL DEFAULT 0,
@@ -75,6 +87,8 @@ class Catalogue:
             for column in ("root_device", "root_inode"):
                 if column not in columns:
                     db.execute(f"ALTER TABLE libraries ADD COLUMN {column} INTEGER")
+            if "hold_prune" not in columns:
+                db.execute("ALTER TABLE libraries ADD COLUMN hold_prune INTEGER NOT NULL DEFAULT 0")
             # Legacy roots haven't been checked against a stored identity yet.
             # Their first full scan can establish one without pruning old rows.
             # A process can disappear mid-scan. The next start can resume safely
@@ -213,19 +227,22 @@ class Catalogue:
         # share would look rather convincingly like an empty library.
         with self.write_lock, self.connect() as db:
             stored = db.execute(
-                "SELECT root_device,root_inode FROM libraries WHERE id=?", (library_id,)
+                "SELECT root_device,root_inode,hold_prune FROM libraries WHERE id=?", (library_id,)
             ).fetchone()
             if stored is None:
                 raise ValueError("Library no longer exists.")
             recorded = (stored["root_device"], stored["root_inode"])
             if recorded != (None, None) and recorded != (root_device, root_inode):
                 raise ValueError("Library root changed since registration; catalogue left untouched.")
-            if allow_prune and recorded != (None, None):
+            if allow_prune and not stored["hold_prune"] and recorded != (None, None):
                 db.execute("DELETE FROM files WHERE library_id=? AND observed_at<?",
                            (library_id, started))
+            # Preserve records through the first complete scan after an
+            # explicitly approved root change. Later scans may reconcile them.
             db.execute(
-                """UPDATE libraries SET last_scan_at=?,root_device=?,root_inode=?
-                   WHERE id=?""", (utc_now(), root_device, root_inode, library_id)
+                """UPDATE libraries SET last_scan_at=?,root_device=?,root_inode=?,
+                   hold_prune=0 WHERE id=?""",
+                (utc_now(), root_device, root_inode, library_id)
             )
 
     def files(self, library_id: int, limit: int = 100, search: str = "", offset: int = 0):
