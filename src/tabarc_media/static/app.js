@@ -1,0 +1,269 @@
+/* The browser is a control panel. Scans keep running on the server. */
+"use strict";
+
+const byId = id => document.getElementById(id);
+const pending = new Set();
+const browse = { library: null, offset: 0, query: "", pageSize: 50 };
+
+async function api(path, method = "GET", payload) {
+  const options = { method, headers: { "X-Tabarc-Local": "1" } };
+  if (payload !== undefined) {
+    options.headers["Content-Type"] = "application/json";
+    options.body = JSON.stringify(payload);
+  }
+  const response = await fetch(path, options);
+  let body;
+  try { body = await response.json(); } catch { body = {}; }
+  if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : `Request failed (${response.status}).`);
+  return body;
+}
+
+function text(tag, value, className) {
+  const el = document.createElement(tag);
+  el.textContent = value;
+  if (className) el.className = className;
+  return el;
+}
+
+function message(value, error = false) {
+  const notice = byId("notice");
+  notice.hidden = false;
+  notice.className = error ? "notice error" : "notice";
+  notice.textContent = value;
+}
+
+function button(label, task) {
+  const el = document.createElement("button");
+  el.type = "button";
+  el.textContent = label;
+  el.addEventListener("click", async () => {
+    el.disabled = true;
+    try { await task(); await refresh(); }
+    catch (error) { message(error.message, true); }
+    finally { el.disabled = false; }
+  });
+  return el;
+}
+
+function selected(name) {
+  return Array.from(document.querySelectorAll(`input[name="${name}"]:checked`), input => input.value);
+}
+
+function renderLibraries(libraries) {
+  const node = byId("libraries");
+  node.replaceChildren();
+  if (!libraries.length) { node.append(text("p", "No libraries added yet.", "empty")); return; }
+  for (const lib of libraries) {
+    const item = text("div", "", "library");
+    item.append(text("strong", lib.name), text("p", lib.root, "meta"));
+    item.append(text("p", `${lib.media_types.join(", ")} · ${lib.scan_profile} · ${lib.applications.join(", ") || "no consumer selected"}`, "meta"));
+    const actions = text("div", "", "actions");
+    actions.append(button("Scan library", async () => {
+      await api(`/api/libraries/${lib.id}/scan`, "POST");
+      message(`Scanning ${lib.name}. The original media will not be changed.`);
+    }));
+    actions.append(button("Check root", async () => {
+      const report = await api(`/api/libraries/${lib.id}/root-review`);
+      renderRootReview(report);
+    }));
+    actions.append(button("View files", async () => {
+      browse.library = lib;
+      browse.offset = 0;
+      browse.query = "";
+      byId("browse-search").value = "";
+      await browseFiles();
+    }));
+    actions.append(button("Preview", async () => {
+      const result = await api(`/api/libraries/${lib.id}/proposals?limit=500`);
+      renderProposals(result.proposals);
+    }));
+    item.append(actions);
+    node.append(item);
+  }
+}
+
+async function browseFiles() {
+  if (!browse.library) return;
+  const { library, offset, query, pageSize } = browse;
+  const url = `/api/libraries/${library.id}/files?limit=${pageSize}&offset=${offset}&search=${encodeURIComponent(query)}`;
+  const files = await api(url);
+  const list = byId("browse-results");
+  list.replaceChildren();
+  byId("browse-library").textContent = `Browsing ${library.name}; catalogue results, not filesystem changes.`;
+  byId("browse-search").disabled = false;
+  byId("browse-submit").disabled = false;
+  if (!files.length) {
+    list.append(text("p", offset ? "No more matching files." : "No indexed files match this search.", "empty"));
+  }
+  for (const file of files) {
+    const row = text("div", "", "file-row");
+    row.append(text("strong", file.relative_path));
+    row.append(text("span", `${file.kind} · ${file.size.toLocaleString("en-GB")} bytes`, "meta"));
+    list.append(row);
+  }
+  byId("browse-page").textContent = `Page ${Math.floor(offset / pageSize) + 1}`;
+  byId("browse-prev").disabled = offset === 0;
+  byId("browse-next").disabled = files.length < pageSize;
+}
+
+function renderRootReview(report) {
+  byId("root-panel").hidden = false;
+  const container = byId("root-review");
+  container.replaceChildren();
+  container.append(text("strong", report.library));
+  container.append(text("p", report.root, "meta"));
+  container.append(text("p", `Status: ${report.status} · ${report.indexed_files.toLocaleString("en-GB")} indexed records`, "meta"));
+  const idLine = (label, data) => {
+    const device = data ? data.device : "unavailable";
+    const inode = data ? data.inode : "unavailable";
+    container.append(text("p", `${label}: device ${device}, inode ${inode}`, "meta"));
+  };
+  idLine("Authorised", report.recorded);
+  idLine("Currently found", report.current);
+  if (report.problem) container.append(text("p", report.problem, "meta"));
+  if (report.sample.length) {
+    container.append(text("p", "Previously indexed paths (sample):", "hint"));
+    for (const item of report.sample) {
+      const check = item.current ? ` — ${item.current.replaceAll("_", " ")}` : "";
+      container.append(text("div", item.relative_path + check, "file-row"));
+    }
+  }
+  if (report.hold_prune) {
+    container.append(text("p", "The next clean scan will retain old catalogue records. Reconciliation can resume after that.", "hint"));
+  }
+  if (report.history.length) {
+    container.append(text("p", `Previous confirmations: ${report.history.length}`, "hint"));
+  }
+  if (report.status === "changed") {
+    container.append(text("p",
+      "This path now refers to a different directory. Confirm only after checking the mounted storage yourself. Existing catalogue records are retained through the first completed scan.",
+      "hint"));
+    const label = text("label", "Type REAUTHORISE to accept the new directory identity:");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.autocomplete = "off";
+    input.placeholder = "REAUTHORISE";
+    input.setAttribute("aria-label", "Root change confirmation");
+    label.append(input);
+    container.append(label);
+    const approve = button("Approve changed root", async () => {
+      if (input.value !== "REAUTHORISE") throw new Error("Type REAUTHORISE exactly to confirm.");
+      const updated = await api(`/api/libraries/${report.library_id}/root-authorisation`, "POST", {
+        previous_device: report.recorded.device,
+        previous_inode: report.recorded.inode,
+        new_device: report.current.device,
+        new_inode: report.current.inode,
+        confirmation: input.value
+      });
+      renderRootReview(updated);
+      message("Root authorised. The first complete scan will preserve existing catalogue records.");
+    });
+    container.append(approve);
+  } else if (report.status === "unavailable") {
+    container.append(text("p", "Reconnect or restore this storage folder before attempting another scan.", "hint"));
+  } else if (report.status === "unverified") {
+    container.append(text("p", "This legacy library needs one complete read-only scan to establish its root identity.", "hint"));
+  } else {
+    container.append(text("p", "The configured root identity matches the recorded directory.", "hint"));
+  }
+}
+
+function renderProposals(proposals) {
+  const node = byId("proposals");
+  node.replaceChildren();
+  if (!proposals.length) {
+    node.append(text("p", "No filename pattern suggestions in the indexed sample.", "empty"));
+    return;
+  }
+  for (const item of proposals.slice(0, 35)) {
+    const row = text("div", "", "proposal");
+    row.append(text("div", item.current));
+    row.append(text("span", `Suggestion: ${item.suggested_name}`));
+    row.append(text("p", item.reason, "hint"));
+    node.append(row);
+  }
+}
+
+function renderJobs(jobs) {
+  const node = byId("jobs");
+  node.replaceChildren();
+  if (!jobs.length) { node.append(text("p", "Nothing running.", "empty")); return; }
+  for (const job of jobs.slice(0, 10)) {
+    const item = text("div", "", "job");
+    item.append(text("strong", `Scan #${job.id} · ${job.state.replaceAll("_", " ")}`));
+    item.append(text("p", `${job.seen} seen · ${job.changed} new/updated · ${job.errors} errors`, "meta"));
+    if (job.message) item.append(text("p", job.message, "meta"));
+    const actions = text("div", "", "actions");
+    if (job.state === "running") {
+      actions.append(button("Pause", async () => {
+        await api(`/api/jobs/${job.id}/pause`, "POST");
+        message("Pausing after the current file.");
+      }));
+    } else if (job.state === "paused") {
+      actions.append(button("Resume", async () => {
+        await api(`/api/jobs/${job.id}/resume`, "POST");
+        message("Resuming from a fresh incremental scan.");
+      }));
+    }
+    item.append(actions);
+    node.append(item);
+  }
+}
+
+async function refresh() {
+  if (pending.has("refresh")) return;
+  pending.add("refresh");
+  try {
+    const [status, libraries, jobs] = await Promise.all([
+      api("/api/status"), api("/api/libraries"), api("/api/jobs")
+    ]);
+    byId("metric-libraries").textContent = status.libraries.toLocaleString("en-GB");
+    byId("metric-files").textContent = status.files.toLocaleString("en-GB");
+    byId("metric-worker").textContent = jobs.some(j => j.state === "running") ? "Scanning" : "Idle";
+    renderLibraries(libraries);
+    renderJobs(jobs);
+  } catch (error) { message(error.message, true); }
+  finally { pending.delete("refresh"); }
+}
+
+byId("library-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = form.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  try {
+    const media_types = selected("media");
+    if (!media_types.length) throw new Error("Choose at least one media type.");
+    const payload = {
+      name: byId("library-name").value.trim(),
+      root: byId("library-root").value.trim(),
+      media_types,
+      applications: selected("app"),
+      scan_profile: byId("scan-profile").value
+    };
+    const library = await api("/api/libraries", "POST", payload);
+    message(`Added ${library.name}. Select Scan library when you're ready.`);
+    form.reset();
+    await refresh();
+  } catch (error) { message(error.message, true); }
+  finally { submit.disabled = false; }
+});
+
+byId("browse-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  if (!browse.library) return;
+  browse.query = byId("browse-search").value.trim();
+  browse.offset = 0;
+  try { await browseFiles(); } catch (error) { message(error.message, true); }
+});
+byId("browse-prev").addEventListener("click", async () => {
+  browse.offset = Math.max(0, browse.offset - browse.pageSize);
+  try { await browseFiles(); } catch (error) { message(error.message, true); }
+});
+byId("browse-next").addEventListener("click", async () => {
+  browse.offset += browse.pageSize;
+  try { await browseFiles(); } catch (error) { message(error.message, true); }
+});
+
+refresh();
+setInterval(refresh, 2500);

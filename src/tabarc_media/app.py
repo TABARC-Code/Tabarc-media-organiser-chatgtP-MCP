@@ -1,0 +1,251 @@
+"""Local HTTP interface. No media-modifying endpoints exist in this release."""
+
+import argparse
+import os
+import re
+import sqlite3
+from contextlib import asynccontextmanager
+from pathlib import Path
+from urllib.parse import urlsplit
+
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+from .catalogue import Catalogue
+from .instance_lock import CatalogueLock
+from .scanner import Scanner
+
+ASSETS = Path(__file__).resolve().parent / "static"
+
+
+class LibraryInput(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    root: str = Field(min_length=1)
+    media_types: list[str] = Field(min_length=1)
+    applications: list[str] = Field(default_factory=list)
+    scan_profile: str = "balanced"
+
+
+class RootConfirmation(BaseModel):
+    previous_device: int | None
+    previous_inode: int | None
+    new_device: int
+    new_inode: int
+    confirmation: str
+
+
+def suggestions(files: list[dict]):
+    """Never authoritative: these are filename guesses, not provider matches."""
+    output = []
+    episode = re.compile(r"(?i)^(.*?)\bS(\d{1,2})E(\d{1,3})(?:E\d{1,3})?\b")
+    movie = re.compile(r"(?i)^(.*?)\b((?:19|20)\d{2})\b")
+
+    for file in files:
+        path = Path(file["relative_path"])
+        if file["kind"] != "film":
+            continue
+        title = None
+        match = episode.search(path.stem)
+        if match:
+            name = re.sub(r"[._]+", " ", match.group(1)).strip(" -")
+            if name:
+                title = f"{name} - S{int(match.group(2)):02d}E{int(match.group(3)):02d}{path.suffix}"
+        else:
+            match = movie.search(path.stem)
+            if match:
+                name = re.sub(r"[._]+", " ", match.group(1)).strip(" -")
+                if name:
+                    title = f"{name} ({match.group(2)}){path.suffix}"
+        if title and title != path.name:
+            output.append({
+                "current": file["relative_path"],
+                "suggested_name": title,
+                "status": "review_required",
+                "reason": "Filename pattern only. Verify identity, edition and associated files before renaming."
+            })
+    return output
+
+
+def create_app(data_dir: Path | None = None):
+    if data_dir is None:
+        data_dir = Path(os.environ.get(
+            "TABARC_DATA_DIR", "~/.local/share/tabarc-media-organiser"
+        )).expanduser()
+    # Take the exclusive lock *before* initialising the database. A second
+    # process mustn't mark a live scan as interrupted during startup.
+    catalogue_lock = CatalogueLock(Path(data_dir))
+    try:
+        store = Catalogue(Path(data_dir))
+    except BaseException:
+        catalogue_lock.close()
+        raise
+    scanner = Scanner(store)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        try:
+            yield
+        finally:
+            if scanner.shutdown():
+                catalogue_lock.close()
+            # If a blocked worker remains alive, the process retains the
+            # advisory lock. Releasing it would allow concurrent reconciliation.
+
+    app = FastAPI(title="TABARC Media Organiser", version="0.1.0-alpha",
+                  docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    app.state.catalogue = store
+    app.state.scanner = scanner
+    # Reject unexpected Host values before processing local API requests.
+    # Without this, DNS rebinding could defeat a localhost-only deployment.
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=["localhost", "127.0.0.1", "[::1]"],
+        www_redirect=False,
+    )
+
+    @app.middleware("http")
+    async def local_write_protection(request: Request, call_next):
+        if request.method not in {"GET", "HEAD", "OPTIONS"}:
+            if request.headers.get("x-tabarc-local") != "1":
+                return JSONResponse(status_code=403, content={"detail": "Local action header required."})
+            origin = request.headers.get("origin")
+            if origin:
+                parsed = urlsplit(origin)
+                if parsed.scheme not in {"http", "https"} or parsed.netloc != request.headers.get("host"):
+                    return JSONResponse(status_code=403, content={"detail": "Unexpected request origin."})
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'"
+        )
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
+    app.mount("/assets", StaticFiles(directory=ASSETS), name="assets")
+
+    @app.get("/")
+    def home():
+        return FileResponse(ASSETS / "index.html")
+
+    @app.get("/api/status")
+    def status():
+        return store.status()
+
+    @app.get("/api/libraries")
+    def list_libraries():
+        return store.libraries()
+
+    @app.post("/api/libraries", status_code=201)
+    def add_library(payload: LibraryInput):
+        try:
+            lib_id = store.add_library(payload.name, Path(payload.root),
+                                       payload.media_types, payload.applications,
+                                       payload.scan_profile)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return store.library(lib_id)
+
+    @app.get("/api/libraries/{library_id}/root-review")
+    def root_review(library_id: int):
+        try:
+            return store.root_review(library_id)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.post("/api/libraries/{library_id}/root-authorisation")
+    def root_authorisation(library_id: int, payload: RootConfirmation):
+        try:
+            return scanner.reauthorise_root(
+                library_id, payload.previous_device, payload.previous_inode,
+                payload.new_device, payload.new_inode, payload.confirmation
+            )
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.get("/api/libraries/{library_id}/files")
+    def list_files(library_id: int, limit: int = Query(100, ge=1, le=500),
+                   search: str = Query("", max_length=200),
+                   offset: int = Query(0, ge=0, le=10_000_000)):
+        if not store.library(library_id):
+            raise HTTPException(404, "Library not found.")
+        return store.files(library_id, limit, search, offset)
+
+    @app.get("/api/libraries/{library_id}/proposals")
+    def preview(library_id: int, limit: int = Query(100, ge=1, le=500)):
+        if not store.library(library_id):
+            raise HTTPException(404, "Library not found.")
+        return {"mode": "preview_only", "proposals": suggestions(store.files(library_id, limit))}
+
+    @app.post("/api/libraries/{library_id}/scan", status_code=202)
+    def start_scan(library_id: int):
+        try:
+            job_id = scanner.start(library_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return store.job(job_id)
+
+    @app.get("/api/jobs")
+    def list_jobs():
+        return store.jobs()
+
+    @app.post("/api/jobs/{job_id}/pause", status_code=202)
+    def pause_job(job_id: int):
+        try:
+            scanner.pause(job_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {"message": "Pause requested.", "job_id": job_id}
+
+    @app.post("/api/jobs/{job_id}/resume", status_code=202)
+    def resume_job(job_id: int):
+        job = store.job(job_id)
+        if not job:
+            raise HTTPException(404, "Job not found.")
+        try:
+            scanner.start(job["library_id"], resume_id=job_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return store.job(job_id)
+
+    return app
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Read-only local media catalogue")
+    parser.add_argument("--port", type=int, default=8787)
+    parser.add_argument("--data-dir", type=Path, default=None)
+    parser.add_argument(
+        "--backup", type=Path, metavar="ABSOLUTE_PATH",
+        help="Export a consistent SQLite snapshot while the web service is stopped."
+    )
+    args = parser.parse_args()
+    if args.backup is not None:
+        from .backup import backup_catalogue
+
+        state = args.data_dir or Path(os.environ.get(
+            "TABARC_DATA_DIR", "~/.local/share/tabarc-media-organiser"
+        )).expanduser()
+        try:
+            exported = backup_catalogue(state, args.backup)
+        except (OSError, RuntimeError, ValueError, sqlite3.DatabaseError) as exc:
+            parser.error(f"Catalogue backup failed: {exc}")
+        print(f"Catalogue snapshot saved to {exported}")
+        return
+    if not 1 <= args.port <= 65535:
+        parser.error("port must be 1–65535")
+
+    import uvicorn
+    app = create_app(args.data_dir)
+    # Remote binding isn't an option in the initial release. Anyone who wants
+    # a LAN service will need authentication and a proper transport layer first.
+    uvicorn.run(app, host="127.0.0.1", port=args.port)
+
+
+if __name__ == "__main__":
+    main()
