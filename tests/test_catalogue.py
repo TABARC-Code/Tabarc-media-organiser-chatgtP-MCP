@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 from tabarc_media.catalogue import Catalogue, classify
