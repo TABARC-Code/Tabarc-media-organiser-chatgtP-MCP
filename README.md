@@ -114,7 +114,7 @@ python -m tabarc_media
 
 Open `http://127.0.0.1:8787` on the same machine. Add an existing absolute media folder, choose its types and applications, and start a read-only scan. The selected application names are labels only in this release — no connection to Plex or Jellyfin is attempted. Review the [running instructions](docs/running.md) before pointing it at valuable data.
 
-This prototype provides a basic setup form rather than a complete first-run wizard, and it has no NFO exporter or automatic rename facility. The [roadmap](docs/roadmap.md) records what's next.
+This prototype provides a basic setup form rather than a complete first-run wizard, and it has no NFO exporter or automatic rename facility. It does, however, include a reviewed recovery path for changed library mounts and an offline SQLite backup command. The [running guide](docs/running.md) explains both; the [roadmap](docs/roadmap.md) records what's next.
 
 ## Development
 
