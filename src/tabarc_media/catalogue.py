@@ -283,6 +283,23 @@ class Catalogue:
                    WHERE library_id=? ORDER BY id DESC LIMIT 5""",
                 (library_id,)
             )]
+        # Keep this inspection small. It is a hint for the person reviewing
+        # a remount, not an automatic proof that two directories are identical.
+        if current is not None:
+            for item in sample:
+                candidate = root / item["relative_path"]
+                try:
+                    if candidate.is_symlink() or not candidate.resolve(
+                        strict=True
+                    ).is_relative_to(root):
+                        raise ValueError("Path is redirected.")
+                    info = candidate.stat()
+                    item["current"] = (
+                        "same_size" if info.st_size == item["size"]
+                        else "different_size"
+                    )
+                except (OSError, ValueError, RuntimeError):
+                    item["current"] = "missing"
         return {
             "library_id": library_id, "library": library["name"],
             "root": library["root"], "status": status,
