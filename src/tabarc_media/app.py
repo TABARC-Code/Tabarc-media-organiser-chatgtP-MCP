@@ -3,6 +3,7 @@
 import argparse
 import os
 import re
+import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -219,7 +220,23 @@ def main():
     parser = argparse.ArgumentParser(description="Read-only local media catalogue")
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--data-dir", type=Path, default=None)
+    parser.add_argument(
+        "--backup", type=Path, metavar="ABSOLUTE_PATH",
+        help="Export a consistent SQLite snapshot while the web service is stopped."
+    )
     args = parser.parse_args()
+    if args.backup is not None:
+        from .backup import backup_catalogue
+
+        state = args.data_dir or Path(os.environ.get(
+            "TABARC_DATA_DIR", "~/.local/share/tabarc-media-organiser"
+        )).expanduser()
+        try:
+            exported = backup_catalogue(state, args.backup)
+        except (OSError, RuntimeError, ValueError, sqlite3.DatabaseError) as exc:
+            parser.error(f"Catalogue backup failed: {exc}")
+        print(f"Catalogue snapshot saved to {exported}")
+        return
     if not 1 <= args.port <= 65535:
         parser.error("port must be 1–65535")
 
