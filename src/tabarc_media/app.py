@@ -80,8 +80,10 @@ def create_app(data_dir: Path | None = None):
         try:
             yield
         finally:
-            scanner.shutdown()
-            catalogue_lock.close()
+            if scanner.shutdown():
+                catalogue_lock.close()
+            # If a blocked worker remains alive, the process retains the
+            # advisory lock. Releasing it would allow concurrent reconciliation.
 
     app = FastAPI(title="TABARC Media Organiser", version="0.1.0-alpha",
                   docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
