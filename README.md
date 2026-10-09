@@ -103,7 +103,7 @@ The initial Python service is on the `development/read-only-foundation` branch, 
 
 ```bash
 git clone https://github.com/TABARC-Code/Tabarc-media-organiser-chatgtP-MCP.git
-cd TABARC-Media-Organiser
+cd Tabarc-media-organiser-chatgtP-MCP
 git switch development/read-only-foundation
 python3 -m venv .venv
 source .venv/bin/activate
@@ -120,6 +120,6 @@ This prototype provides a basic setup form rather than a complete first-run wiza
 
 This project is being developed under **TABARC-Code**. The immediate work is the filesystem inventory and matching groundwork, not an elaborate AI control panel. The latter is worth doing, but only after the application understands what it's looking at.
 
-See [description.md](description.md) for the longer project brief and design reasoning, and [the roadmap](docs/roadmap.md) for the staged build. Development notes and code comments use UK English and explain actual decisions, limitations and odd cases encountered along the way.
+See [description.md](description.md) for the longer project brief and design reasoning, the [roadmap](docs/roadmap.md) for the staged build, and the [Kaizen review](docs/kaizen-review-2026-10-09.md) for the latest safety and usability audit. Development notes and code comments use UK English and explain actual decisions, limitations and odd cases encountered along the way.
 
 Contributions, issue reports and corrections are welcome once there is something concrete to run or review. A licence still needs to be chosen; until then, don't assume the repository is released under an open-source licence simply because it is public.
