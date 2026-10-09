@@ -245,6 +245,100 @@ class Catalogue:
                 (utc_now(), root_device, root_inode, library_id)
             )
 
+
+    def root_review(self, library_id: int):
+        """Inspect the configured directory without changing media or catalogue state."""
+        library = self.library(library_id)
+        if library is None:
+            raise ValueError("Library does not exist.")
+        root = Path(library["root"])
+        recorded = (library["root_device"], library["root_inode"])
+        current = None
+        problem = None
+        try:
+            # A redirected path must never be accepted as the old mount.
+            if root.is_symlink() or root.resolve(strict=True) != root or not root.is_dir():
+                raise ValueError("The configured path is missing or redirected.")
+            stat = root.stat()
+            current = (stat.st_dev, stat.st_ino)
+        except (OSError, ValueError, RuntimeError) as exc:
+            problem = str(exc)
+        status = (
+            "unavailable" if current is None else
+            "unverified" if recorded == (None, None) else
+            "unchanged" if recorded == current else "changed"
+        )
+        with self.connect() as db:
+            total = db.execute(
+                "SELECT COUNT(*) FROM files WHERE library_id=?", (library_id,)
+            ).fetchone()[0]
+            sample = [dict(row) for row in db.execute(
+                """SELECT relative_path,size FROM files
+                   WHERE library_id=? ORDER BY relative_path LIMIT 8""",
+                (library_id,)
+            )]
+            history = [dict(row) for row in db.execute(
+                """SELECT previous_device,previous_inode,new_device,new_inode,
+                          confirmed_at,reason FROM root_events
+                   WHERE library_id=? ORDER BY id DESC LIMIT 5""",
+                (library_id,)
+            )]
+        return {
+            "library_id": library_id, "library": library["name"],
+            "root": library["root"], "status": status,
+            "recorded": {"device": recorded[0], "inode": recorded[1]},
+            "current": None if current is None else {
+                "device": current[0], "inode": current[1]
+            },
+            "indexed_files": total, "sample": sample,
+            "hold_prune": bool(library["hold_prune"]), "history": history,
+            "problem": problem,
+        }
+
+    def reauthorise_root(
+        self, library_id: int, previous_device: int, previous_inode: int,
+        new_device: int, new_inode: int, confirmation: str
+    ):
+        """Approve an explicitly inspected root; retain old catalogue records."""
+        if confirmation != "REAUTHORISE":
+            raise ValueError("Type REAUTHORISE to confirm this root change.")
+        with self.write_lock, self.connect() as db:
+            row = db.execute(
+                """SELECT root,root_device,root_inode FROM libraries
+                   WHERE id=?""", (library_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Library does not exist.")
+            previous = (row["root_device"], row["root_inode"])
+            proposed = (new_device, new_inode)
+            if previous != (previous_device, previous_inode):
+                raise ValueError("The registered root changed during review. Start again.")
+            if previous == proposed:
+                raise ValueError("This directory is already authorised.")
+            root = Path(row["root"])
+            try:
+                if root.is_symlink() or root.resolve(strict=True) != root or not root.is_dir():
+                    raise ValueError("The proposed root is unavailable or redirected.")
+                stat = root.stat()
+            except OSError as exc:
+                raise ValueError("The proposed root is unavailable.") from exc
+            if (stat.st_dev, stat.st_ino) != proposed:
+                raise ValueError("The directory changed during confirmation. Review it again.")
+            db.execute(
+                """UPDATE libraries SET root_device=?,root_inode=?,
+                   hold_prune=1 WHERE id=?""",
+                (new_device, new_inode, library_id)
+            )
+            db.execute(
+                """INSERT INTO root_events(
+                   library_id,previous_device,previous_inode,new_device,new_inode,
+                   confirmed_at,reason
+                ) VALUES(?,?,?,?,?,?,?)""",
+                (library_id, previous_device, previous_inode, new_device, new_inode,
+                 utc_now(), "Explicit confirmation; retain index on first completed scan")
+            )
+        return self.root_review(library_id)
+
     def files(self, library_id: int, limit: int = 100, search: str = "", offset: int = 0):
         with self.connect() as db:
             if search:
