@@ -83,6 +83,9 @@ class Scanner:
         # the same lock to clear the active-job marker.
         if thread and thread.is_alive():
             thread.join(timeout=5)
+        # A blocked network filesystem can outlive shutdown's grace period.
+        # Keep the exclusive catalogue lock until this worker has stopped.
+        return not (thread and thread.is_alive())
 
     def _run(self, job_id: int, library: dict):
         root = Path(library["root"])
