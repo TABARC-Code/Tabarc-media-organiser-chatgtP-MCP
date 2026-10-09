@@ -68,6 +68,22 @@ class Scanner:
                 job_id = self.catalogue.new_job(library_id)
             return self._start(job_id, library)
 
+    def reauthorise_root(
+        self, library_id: int, previous_device: int | None,
+        previous_inode: int | None, new_device: int, new_inode: int,
+        confirmation: str
+    ):
+        # Root identity cannot change while a worker is observing the folder.
+        # Keep the scanner lock over the database transaction so no scan can
+        # start between the idle check and the new identity being recorded.
+        with self._lock:
+            if self._thread and self._thread.is_alive():
+                raise ValueError("Pause the active scan before reviewing a changed root.")
+            return self.catalogue.reauthorise_root(
+                library_id, previous_device, previous_inode,
+                new_device, new_inode, confirmation
+            )
+
     def pause(self, job_id: int):
         with self._lock:
             if job_id != self._active_job or not self._thread or not self._thread.is_alive():
