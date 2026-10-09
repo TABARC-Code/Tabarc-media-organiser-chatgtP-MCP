@@ -32,3 +32,14 @@ An early test used the catalogue's default 100-file page and then complained tha
 First, test the scanner on an SMB/NFS-mounted fixture and measure actual CPU, disk and database load. Add a file-stability check before metadata operations, and a proper media record that separates work identity from physical file location. Then add one provider adapter and a matching review queue. Renaming comes after those pieces can be verified together, not before.
 
 The first useful definition of success is still quite plain: point the application at a collection, get a coherent inventory, and be certain the originals stayed exactly where they were.
+
+
+## 9 October 2026 — Kaizen integrity pass
+
+The first audit focused on what could go wrong before any media files are modified. The scanner now checks that the registered root still has the same filesystem identity before it reconciles stale catalogue entries. An interrupted, incomplete or unexpectedly redirected scan leaves existing records intact. Previously registered roots without an identity are adopted conservatively on the first clean scan, with pruning deferred until the next successful run.
+
+Change counts now reflect new or modified file records, not every ordinary observation. A separate file-browser panel handles path search and pages of results without filling the notification banner. The local API rejects unexpected Host headers, while a POSIX catalogue lock prevents two service processes from running against the same state directory. The worker retains that lock if a blocked scan survives the shutdown grace period.
+
+The new regression tests exercise root replacement, legacy catalogue records, partial directory failure, concurrent server starts, paging and actual change counts. CI now includes source linting, Python compilation and browser JavaScript syntax checking. The initial lint pass exposed a handful of routine import-order issues, corrected in the same cycle.
+
+The root identity policy intentionally fails closed when a network share changes identity. This may produce false alarms after legitimate NAS remounts, so the next pass needs a reviewed reauthorisation flow. The current implementation isn't an excuse to bypass that safeguard manually in the database. The full decisions and remaining priorities are in [the Kaizen review](kaizen-review-2026-10-09.md).
