@@ -62,6 +62,10 @@ function renderLibraries(libraries) {
       await api(`/api/libraries/${lib.id}/scan`, "POST");
       message(`Scanning ${lib.name}. The original media will not be changed.`);
     }));
+    actions.append(button("Check root", async () => {
+      const report = await api(`/api/libraries/${lib.id}/root-review`);
+      renderRootReview(report);
+    }));
     actions.append(button("View files", async () => {
       browse.library = lib;
       browse.offset = 0;
@@ -100,6 +104,67 @@ async function browseFiles() {
   byId("browse-page").textContent = `Page ${Math.floor(offset / pageSize) + 1}`;
   byId("browse-prev").disabled = offset === 0;
   byId("browse-next").disabled = files.length < pageSize;
+}
+
+function renderRootReview(report) {
+  byId("root-panel").hidden = false;
+  const container = byId("root-review");
+  container.replaceChildren();
+  container.append(text("strong", report.library));
+  container.append(text("p", report.root, "meta"));
+  container.append(text("p", `Status: ${report.status} · ${report.indexed_files.toLocaleString("en-GB")} indexed records`, "meta"));
+  const idLine = (label, data) => {
+    const device = data ? data.device : "unavailable";
+    const inode = data ? data.inode : "unavailable";
+    container.append(text("p", `${label}: device ${device}, inode ${inode}`, "meta"));
+  };
+  idLine("Authorised", report.recorded);
+  idLine("Currently found", report.current);
+  if (report.problem) container.append(text("p", report.problem, "meta"));
+  if (report.sample.length) {
+    container.append(text("p", "Previously indexed paths (sample):", "hint"));
+    for (const item of report.sample) {
+      container.append(text("div", item.relative_path, "file-row"));
+    }
+  }
+  if (report.hold_prune) {
+    container.append(text("p", "The next clean scan will retain old catalogue records. Reconciliation can resume after that.", "hint"));
+  }
+  if (report.history.length) {
+    container.append(text("p", `Previous confirmations: ${report.history.length}`, "hint"));
+  }
+  if (report.status === "changed") {
+    container.append(text("p",
+      "This path now refers to a different directory. Confirm only after checking the mounted storage yourself. Existing catalogue records are retained through the first completed scan.",
+      "hint"));
+    const label = text("label", "Type REAUTHORISE to accept the new directory identity:");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.autocomplete = "off";
+    input.placeholder = "REAUTHORISE";
+    input.setAttribute("aria-label", "Root change confirmation");
+    label.append(input);
+    container.append(label);
+    const approve = button("Approve changed root", async () => {
+      if (input.value !== "REAUTHORISE") throw new Error("Type REAUTHORISE exactly to confirm.");
+      const updated = await api(`/api/libraries/${report.library_id}/root-authorisation`, "POST", {
+        previous_device: report.recorded.device,
+        previous_inode: report.recorded.inode,
+        new_device: report.current.device,
+        new_inode: report.current.inode,
+        confirmation: input.value
+      });
+      renderRootReview(updated);
+      message("Root authorised. The first complete scan will preserve existing catalogue records.");
+    });
+    container.append(approve);
+  } else if (report.status === "unavailable") {
+    container.append(text("p", "Reconnect or restore this storage folder before attempting another scan.", "hint"));
+  } else if (report.status === "unverified") {
+    container.append(text("p", "This legacy library needs one complete read-only scan to establish its root identity.", "hint"));
+  } else {
+    container.append(text("p", "The configured root identity matches the recorded directory.", "hint"));
+  }
 }
 
 function renderProposals(proposals) {
