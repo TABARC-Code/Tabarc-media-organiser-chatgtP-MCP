@@ -101,6 +101,25 @@
             <h2 id="jobs-title">Recent scans</h2></div></div>
           <div id="jobs" class="jobs-list"><p class="empty">Nothing running.</p></div>
         </section>
+        <section class="panel" aria-labelledby="browse-title">
+          <div class="panel-header"><div><p class="eyebrow">Indexed collection</p>
+            <h2 id="browse-title">File browser</h2></div></div>
+          <p class="hint" id="browse-library">Select View files beside a library to browse its catalogue.</p>
+          <form id="browse-form" class="browse-controls">
+            <label for="browse-search">Search paths</label>
+            <div class="actions">
+              <input id="browse-search" type="search" maxlength="200"
+                     placeholder="Title, folder or extension" disabled>
+              <button type="submit" id="browse-submit" disabled>Search</button>
+            </div>
+          </form>
+          <div id="browse-results"><p class="empty">No library selected.</p></div>
+          <div class="actions browse-pages">
+            <button type="button" id="browse-prev" disabled>Previous</button>
+            <span id="browse-page" aria-live="polite">Page —</span>
+            <button type="button" id="browse-next" disabled>Next</button>
+          </div>
+        </section>
         <section class="panel" aria-labelledby="preview-title">
           <div class="panel-header"><div><p class="eyebrow">No changes applied</p>
             <h2 id="preview-title">Filename suggestions</h2></div></div>
