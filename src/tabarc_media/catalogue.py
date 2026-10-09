@@ -1,10 +1,10 @@
 """SQLite catalogue. Media itself is never written by this module."""
 
 import json
-from contextlib import contextmanager
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 KINDS = {
