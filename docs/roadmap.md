@@ -59,6 +59,10 @@ The [review record](kaizen-review-2026-10-09.md) tracks the first correctness an
 
 Root reauthorisation for legitimate NAS remounts and a consistent **offline** SQLite backup command are now implemented, with synthetic regression tests. Before presenting Milestone 1 as complete, add resource measurements on realistic storage, catalogue restoration tests, versioned migrations and a usability/accessibility review. A working prototype is not yet a general-purpose installation.
 
+### Kaizen cycle 2 — recovery and backups (9 October 2026)
+
+The [second review](kaizen-cycle-2-2026-10-09.md) adds an explicit changed-root approval path, a persisted root-event history and a non-pruning first scan after reauthorisation. It also introduces offline, integrity-checked SQLite snapshots and a disposable inventory benchmark. These capabilities are tested in the alpha, but restoration, measured NAS resource limits and broader filesystem portability remain to be completed.
+
 ### Development discipline
 
 After each four meaningful changes, audit the diff, rerun focused unit tests and the full applicable regression suite. A phase is complete only after its stated exit tests have actually passed. Keep a human-readable changelog and mark blocked or untested hardware-dependent behaviours clearly.
