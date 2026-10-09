@@ -56,8 +56,15 @@ button:hover:not(:disabled) { background: #335366; }
 button.primary { color: #142330; background: var(--accent); border-color: var(--accent); font-weight: 700; margin-top: .7rem; }
 button.primary:hover { background: #c3e6fc; }
 button:disabled { opacity: .5; cursor: not-allowed; }
-.library, .job, .proposal { border-top: 1px solid var(--line); padding: .85rem 0; }
-.library:first-child, .job:first-child, .proposal:first-child { border-top: 0; }
+.library, .job, .proposal, .file-row { border-top: 1px solid var(--line); padding: .85rem 0; }
+.file-row { font-size: .85rem; overflow-wrap: anywhere; }
+.file-row strong, .file-row span { display: block; }
+.file-row span { margin: .15rem 0; }
+.browse-controls .actions { flex-wrap: nowrap; }
+.browse-controls input { flex: 1; min-width: 0; }
+.browse-pages { align-items: center; justify-content: space-between; margin-top: .9rem; }
+.browse-pages span { font-size: .83rem; color: var(--muted); }
+.library:first-child, .job:first-child, .proposal:first-child, .file-row:first-child { border-top: 0; }
 .library strong, .job strong { display: block; }
 .meta { color: var(--muted); font-size: .82rem; overflow-wrap: anywhere; margin: .2rem 0 .6rem; }
 .actions { display: flex; flex-wrap: wrap; gap: .5rem; }
