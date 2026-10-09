@@ -79,3 +79,40 @@ def test_only_one_server_can_open_a_catalogue(tmp_path):
     # The file lock is released when the server shuts down.
     with TestClient(create_app(tmp_path / "state"), base_url="http://localhost") as second:
         assert second.get("/api/status").status_code == 200
+
+
+def test_http_root_review_and_explicit_reauthorisation(tmp_path):
+    root = tmp_path / "films"
+    root.mkdir()
+    with TestClient(create_app(tmp_path / "state"), base_url="http://localhost") as client:
+        response = client.post("/api/libraries", json={
+            "name": "Films", "root": str(root), "media_types": ["films"]
+        }, headers=HEADERS)
+        lib = response.json()["id"]
+        old = client.get(f"/api/libraries/{lib}/root-review").json()
+        assert old["status"] == "unchanged"
+
+        root.rename(tmp_path / "disconnected-root")
+        root.mkdir()
+        changed = client.get(f"/api/libraries/{lib}/root-review").json()
+        assert changed["status"] == "changed"
+        payload = {
+            "previous_device": changed["recorded"]["device"],
+            "previous_inode": changed["recorded"]["inode"],
+            "new_device": changed["current"]["device"],
+            "new_inode": changed["current"]["inode"],
+            "confirmation": "REAUTHORISE"
+        }
+        assert client.post(f"/api/libraries/{lib}/root-authorisation", json=payload).status_code == 403
+        assert client.post(f"/api/libraries/{lib}/root-authorisation",
+                           json={**payload, "confirmation": "approve"},
+                           headers=HEADERS).status_code == 409
+        confirmed = client.post(f"/api/libraries/{lib}/root-authorisation",
+                                json=payload, headers=HEADERS)
+        assert confirmed.status_code == 200
+        assert confirmed.json()["status"] == "unchanged"
+        assert confirmed.json()["hold_prune"] is True
+        assert len(confirmed.json()["history"]) == 1
+        # A recorded confirmation cannot be replayed against the new root.
+        assert client.post(f"/api/libraries/{lib}/root-authorisation",
+                           json=payload, headers=HEADERS).status_code == 409
