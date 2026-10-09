@@ -3,6 +3,7 @@
 
 const byId = id => document.getElementById(id);
 const pending = new Set();
+const browse = { library: null, offset: 0, query: "", pageSize: 50 };
 
 async function api(path, method = "GET", payload) {
   const options = { method, headers: { "X-Tabarc-Local": "1" } };
@@ -62,8 +63,11 @@ function renderLibraries(libraries) {
       message(`Scanning ${lib.name}. The original media will not be changed.`);
     }));
     actions.append(button("View files", async () => {
-      const files = await api(`/api/libraries/${lib.id}/files?limit=30`);
-      message(files.length ? files.map(f => f.relative_path).join(" · ") : "No indexed files yet. Run a scan first.");
+      browse.library = lib;
+      browse.offset = 0;
+      browse.query = "";
+      byId("browse-search").value = "";
+      await browseFiles();
     }));
     actions.append(button("Preview", async () => {
       const result = await api(`/api/libraries/${lib.id}/proposals?limit=500`);
@@ -72,6 +76,30 @@ function renderLibraries(libraries) {
     item.append(actions);
     node.append(item);
   }
+}
+
+async function browseFiles() {
+  if (!browse.library) return;
+  const { library, offset, query, pageSize } = browse;
+  const url = `/api/libraries/${library.id}/files?limit=${pageSize}&offset=${offset}&search=${encodeURIComponent(query)}`;
+  const files = await api(url);
+  const list = byId("browse-results");
+  list.replaceChildren();
+  byId("browse-library").textContent = `Browsing ${library.name}; catalogue results, not filesystem changes.`;
+  byId("browse-search").disabled = false;
+  byId("browse-submit").disabled = false;
+  if (!files.length) {
+    list.append(text("p", offset ? "No more matching files." : "No indexed files match this search.", "empty"));
+  }
+  for (const file of files) {
+    const row = text("div", "", "file-row");
+    row.append(text("strong", file.relative_path));
+    row.append(text("span", `${file.kind} · ${file.size.toLocaleString("en-GB")} bytes`, "meta"));
+    list.append(row);
+  }
+  byId("browse-page").textContent = `Page ${Math.floor(offset / pageSize) + 1}`;
+  byId("browse-prev").disabled = offset === 0;
+  byId("browse-next").disabled = files.length < pageSize;
 }
 
 function renderProposals(proposals) {
@@ -97,7 +125,7 @@ function renderJobs(jobs) {
   for (const job of jobs.slice(0, 10)) {
     const item = text("div", "", "job");
     item.append(text("strong", `Scan #${job.id} · ${job.state.replaceAll("_", " ")}`));
-    item.append(text("p", `${job.seen} files seen · ${job.errors} errors`, "meta"));
+    item.append(text("p", `${job.seen} seen · ${job.changed} new/updated · ${job.errors} errors`, "meta"));
     if (job.message) item.append(text("p", job.message, "meta"));
     const actions = text("div", "", "actions");
     if (job.state === "running") {
@@ -153,6 +181,22 @@ byId("library-form").addEventListener("submit", async event => {
     await refresh();
   } catch (error) { message(error.message, true); }
   finally { submit.disabled = false; }
+});
+
+byId("browse-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  if (!browse.library) return;
+  browse.query = byId("browse-search").value.trim();
+  browse.offset = 0;
+  try { await browseFiles(); } catch (error) { message(error.message, true); }
+});
+byId("browse-prev").addEventListener("click", async () => {
+  browse.offset = Math.max(0, browse.offset - browse.pageSize);
+  try { await browseFiles(); } catch (error) { message(error.message, true); }
+});
+byId("browse-next").addEventListener("click", async () => {
+  browse.offset += browse.pageSize;
+  try { await browseFiles(); } catch (error) { message(error.message, true); }
 });
 
 refresh();
