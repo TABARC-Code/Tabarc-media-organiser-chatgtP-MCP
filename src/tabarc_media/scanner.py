@@ -177,7 +177,9 @@ class Scanner:
                 job_id, state="completed" if not errors else "completed_with_errors",
                 seen=seen, changed=changed, errors=errors, message=last_error
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
+            # The worker boundary must record unexpected failures as a job
+            # error rather than leaving the job marked as running forever.
             # Leave old index entries untouched on failure. The error belongs
             # in the job history rather than being swallowed by the thread.
             self.catalogue.update_job(job_id, state="failed", seen=seen,
