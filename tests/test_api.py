@@ -1,7 +1,7 @@
 import time
 
-import pytest
 from fastapi.testclient import TestClient
+import pytest
 
 from tabarc_media.app import create_app, suggestions
 
