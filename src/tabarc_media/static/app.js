@@ -124,7 +124,8 @@ function renderRootReview(report) {
   if (report.sample.length) {
     container.append(text("p", "Previously indexed paths (sample):", "hint"));
     for (const item of report.sample) {
-      container.append(text("div", item.relative_path, "file-row"));
+      const check = item.current ? ` — ${item.current.replaceAll("_", " ")}` : "";
+      container.append(text("div", item.relative_path + check, "file-row"));
     }
   }
   if (report.hold_prune) {
