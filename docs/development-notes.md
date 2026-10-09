@@ -43,3 +43,12 @@ Change counts now reflect new or modified file records, not every ordinary obser
 The new regression tests exercise root replacement, legacy catalogue records, partial directory failure, concurrent server starts, paging and actual change counts. CI now includes source linting, Python compilation and browser JavaScript syntax checking. The initial lint pass exposed a handful of routine import-order issues, corrected in the same cycle.
 
 The root identity policy intentionally fails closed when a network share changes identity. This may produce false alarms after legitimate NAS remounts, so the next pass needs a reviewed reauthorisation flow. The current implementation isn't an excuse to bypass that safeguard manually in the database. The full decisions and remaining priorities are in [the Kaizen review](kaizen-review-2026-10-09.md).
+
+
+## 9 October 2026 — Changed-root recovery, backups and measurement
+
+The root-integrity guard now has an explicit review path in the dashboard. A changed root cannot authorise itself; the previous and current identities must agree with the confirmation request, and the scanner must be idle. The decision is added to the catalogue's root history. The first complete scan afterwards retains old records, leaving a second clean pass to reconcile them.
+
+An offline backup command now uses SQLite's own snapshot mechanism under the catalogue's exclusive lock. It checks integrity, avoids overwrites and refuses to place the result inside a media library. The snapshot contains private paths, so its filesystem permissions matter. No restore command has been built yet.
+
+A small disposable benchmark measures first and repeat scans using placeholder files. This is a start on repeatable performance evidence, not a claim about behaviour on a busy NAS. The detailed findings and remaining limitations are recorded in [Kaizen cycle 2](kaizen-cycle-2-2026-10-09.md).
