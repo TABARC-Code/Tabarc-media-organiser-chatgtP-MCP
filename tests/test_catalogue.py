@@ -128,8 +128,9 @@ def test_changed_root_requires_explicit_confirmation_and_defers_pruning(tmp_path
     assert {f["relative_path"] for f in store.files(lib)} == {"old.mkv", "new.mkv"}
     assert store.root_review(lib)["hold_prune"] is False
 
+    store.upsert_batch(lib, [("new.mkv", "film", 11, 101, 90.0)])
     store.finalise_scan(lib, 80.0, current["device"], current["inode"])
-    assert {f["relative_path"] for f in store.files(lib)} == set()
+    assert {f["relative_path"] for f in store.files(lib)} == {"new.mkv"}
     # The index was reconciled; no media file on either root was touched.
     assert (old_root / "old.mkv").read_bytes() == b"original"
     assert (root / "new.mkv").read_bytes() == b"replacement"
