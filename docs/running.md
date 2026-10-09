@@ -32,7 +32,7 @@ The default catalogue path is `~/.local/share/tabarc-media-organiser/catalogue.s
 
 ## Current operating safeguards
 
-The service accepts localhost hostnames only, and the Linux alpha takes an exclusive catalogue lock so a second server cannot start against the same state directory. Library roots have recorded device/inode identities. A replaced directory or changed mount causes an error rather than silently reconciling an unrelated tree; an explicit root reauthorisation screen is not available yet.
+The service accepts localhost hostnames only, and the Linux alpha takes an exclusive catalogue lock so a second server cannot start against the same state directory. Library roots have recorded device/inode identities. A replaced directory or changed mount causes an error rather than silently reconciling an unrelated tree. The dashboard now offers an explicit root-review step, with recorded and current directory identities, a small sample of historical filenames, and a typed confirmation to approve a replacement.
 
 File browsing now has search and numbered pages, and scan history distinguishes files seen from genuinely new or updated records. These improvements don't change the read-only nature of the prototype.
 
@@ -44,6 +44,28 @@ File browsing now has search and numbered pages, and scan history distinguishes 
 4. The dashboard shows the number of indexed files, job history and sample filename suggestions. Suggestions use filename patterns only: they are not authoritative matches. There is **no Apply button**.
 
 Paused scans recheck the folder from the beginning when resumed. Already catalogued files are updated in place. Incomplete or faulty scans never prune unseen files from the catalogue, which matters when a network share briefly disappears.
+
+## Recovering a changed mount
+
+If a mount is replaced or remounted with a different recorded device/inode, the scan stops and keeps the existing catalogue intact. The path can be inspected through **Check root** beside the relevant library. Review the old and current identities, sample file status and actual contents of the mounted share before accepting a change.
+
+Only use **Approve changed root** when the displayed folder really belongs to the intended library. Type `REAUTHORISE` in the confirmation field. The application records an audit event and retains the existing catalogue through the first complete scan after approval. A later complete scan may reconcile entries no longer present. An incomplete scan does not clear this safeguard.
+
+Reauthorisation is blocked while a scan is active. If a mount is unavailable or redirected through a symbolic link, restore the path first; approval is not offered.
+
+This is a cautious recovery mechanism, not cryptographic proof of media identity. On network storage, the recorded device/inode may change after an ordinary remount, so verifying the actual share is essential.
+
+## Backing up the local catalogue
+
+Stop the web service before running a backup. The snapshot operation uses SQLite's backup API, checks the result for corruption, writes a private file and refuses to overwrite an existing destination.
+
+```bash
+python -m tabarc_media --backup /home/user/backups/media-catalogue-2026-10-09.sqlite3
+```
+
+For a non-default catalogue location, also specify `--data-dir /path/to/state`. The destination directory must already exist and **must be outside all registered media roots**. The backup contains your library paths, indexed filenames and job information, so treat it as private data. It is not encrypted.
+
+Backups cannot run while the server holds the catalogue lock. Restoring a snapshot is not yet supported through the interface; keep the original and the exported copy until a tested restore and migration procedure exists.
 
 ## Limitations
 
