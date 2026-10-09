@@ -57,7 +57,7 @@ Status: proposal; passing criteria are mandatory.
 
 The [review record](kaizen-review-2026-10-09.md) tracks the first correctness and security improvements. The single-server lock, root identity checks, accurate change counters, directory traversal guards and paged file browser are implemented. GitHub Actions now also checks Python lint and browser JavaScript syntax.
 
-Before presenting Milestone 1 as complete, add root reauthorisation for legitimate NAS remounts, a catalogue backup/export path, resource measurements on realistic storage and a usability/accessibility review. A working prototype is not yet a general-purpose installation.
+Root reauthorisation for legitimate NAS remounts and a consistent **offline** SQLite backup command are now implemented, with synthetic regression tests. Before presenting Milestone 1 as complete, add resource measurements on realistic storage, catalogue restoration tests, versioned migrations and a usability/accessibility review. A working prototype is not yet a general-purpose installation.
 
 ### Development discipline
 
