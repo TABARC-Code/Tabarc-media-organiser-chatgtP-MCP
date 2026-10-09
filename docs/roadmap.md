@@ -8,13 +8,13 @@ Status: proposal; passing criteria are mandatory.
 - Select an open-source licence before accepting contributed code.
 - Reuse *ideas* from uploaded reference tools, not code without compatible licences.
 
-## Milestone 1 — usable read-only MVP (in progress)
+## Milestone 1 — usable read-only MVP (in progress; core scanner and dashboard tested)
 
 - Python 3.11+, FastAPI and lightweight local web UI; SQLite on local storage with the initial schema and a basic migration. Implemented as an alpha; accessibility still needs review.
 - Setup wizard: multiple media/app selections, library root picker, safe operation mode, scanning intensity.
 - Read-only filesystem inventory with ignore rules, resumable progress, pause/resume and rate limiting.
 - ffprobe/ExifTool optional adapters with graceful absence handling (not implemented yet); no transcode and no full-file hashes by default.
-- Dashboard: total files, type breakdown, unmapped files, recent scans, errors and saved settings.
+- Dashboard: total files, type breakdown, unmapped files, recent scans, errors and saved settings. Core library inventory, browsable paths, search/paging and scan history are implemented; provider-based review remains planned.
 - **Exit:** tested against fixture libraries, no changed media files, low-resource scan, restart-safe jobs.
 
 ## Milestone 2 — matching and change previews
@@ -52,6 +52,12 @@ Status: proposal; passing criteria are mandatory.
 - Authentication for optional LAN hosting, backup/restore UI, crash recovery, export and logs.
 - Performance run over representative large datasets/NAS; document throughput, I/O and CPU measurements rather than guessing.
 - **Exit:** reproducible release with CI, sample configuration and a conservative default.
+
+### Kaizen quality gate (9 October 2026)
+
+The [review record](kaizen-review-2026-10-09.md) tracks the first correctness and security improvements. The single-server lock, root identity checks, accurate change counters, directory traversal guards and paged file browser are implemented. GitHub Actions now also checks Python lint and browser JavaScript syntax.
+
+Before presenting Milestone 1 as complete, add root reauthorisation for legitimate NAS remounts, a catalogue backup/export path, resource measurements on realistic storage and a usability/accessibility review. A working prototype is not yet a general-purpose installation.
 
 ### Development discipline
 
