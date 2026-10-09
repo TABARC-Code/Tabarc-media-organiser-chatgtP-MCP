@@ -119,6 +119,12 @@ class Scanner:
                     return
                 directory = stack.pop()
                 try:
+                    # A directory could have become a symlink after it was put
+                    # on the stack. Never descend into a path outside this root.
+                    if directory.is_symlink() or not directory.resolve(strict=True).is_relative_to(root):
+                        errors += 1
+                        last_error = f"Directory moved or became a symbolic link: {directory.name}"
+                        continue
                     with os.scandir(directory) as entries:
                         for entry in entries:
                             if self._pause.is_set():
