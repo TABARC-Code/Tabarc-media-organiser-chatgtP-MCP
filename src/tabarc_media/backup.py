@@ -3,6 +3,7 @@
 import os
 import sqlite3
 import tempfile
+from contextlib import closing
 from pathlib import Path
 from urllib.parse import quote
 
@@ -35,7 +36,7 @@ def backup_catalogue(data_dir: Path, destination: Path) -> Path:
         # Backups contain full paths and private collection information, so
         # they must never be saved inside a scanned library by accident.
         source_uri = "file:" + quote(str(database), safe="/") + "?mode=ro"
-        with sqlite3.connect(source_uri, uri=True) as source:
+        with closing(sqlite3.connect(source_uri, uri=True)) as source:
             roots = [Path(row[0]) for row in source.execute("SELECT root FROM libraries")]
             for root in roots:
                 if output.is_relative_to(root):
@@ -48,7 +49,7 @@ def backup_catalogue(data_dir: Path, destination: Path) -> Path:
                 temporary = Path(staging.name)
             os.chmod(temporary, 0o600)
             try:
-                with sqlite3.connect(temporary) as snapshot:
+                with closing(sqlite3.connect(temporary)) as snapshot:
                     source.backup(snapshot, pages=64, sleep=0.03)
                     integrity = snapshot.execute("PRAGMA integrity_check").fetchone()[0]
                     if integrity != "ok":
