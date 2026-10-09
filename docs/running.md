@@ -10,7 +10,7 @@ Python 3.11 or later. The initial supported environment is Linux; other platform
 
 ```bash
 git clone https://github.com/TABARC-Code/Tabarc-media-organiser-chatgtP-MCP.git
-cd TABARC-Media-Organiser
+cd Tabarc-media-organiser-chatgtP-MCP
 git switch development/read-only-foundation
 python3 -m venv .venv
 source .venv/bin/activate
@@ -29,6 +29,12 @@ tabarc-media --port 8788 --data-dir /path/to/empty/local/state-folder
 ```
 
 The default catalogue path is `~/.local/share/tabarc-media-organiser/catalogue.sqlite3`. Set `TABARC_DATA_DIR` to change this without passing `--data-dir`. Keep it on reliable **local storage**, outside all media roots. SQLite files, job history and write-ahead logs will be created there.
+
+## Current operating safeguards
+
+The service accepts localhost hostnames only, and the Linux alpha takes an exclusive catalogue lock so a second server cannot start against the same state directory. Library roots have recorded device/inode identities. A replaced directory or changed mount causes an error rather than silently reconciling an unrelated tree; an explicit root reauthorisation screen is not available yet.
+
+File browsing now has search and numbered pages, and scan history distinguishes files seen from genuinely new or updated records. These improvements don't change the read-only nature of the prototype.
 
 ## First scan
 
