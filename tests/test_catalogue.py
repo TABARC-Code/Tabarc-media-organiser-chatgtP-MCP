@@ -89,3 +89,56 @@ def test_legacy_root_identity_does_not_prune_first_scan(tmp_path):
     assert len(store.files(lib)) == 1
     store.finalise_scan(lib, 40.0, stat.st_dev, stat.st_ino)
     assert store.files(lib) == []
+
+
+def test_changed_root_requires_explicit_confirmation_and_defers_pruning(tmp_path):
+    root = tmp_path / "films"
+    root.mkdir()
+    (root / "old.mkv").write_bytes(b"original")
+    store = Catalogue(tmp_path / "state")
+    lib = store.add_library("Films", root, ["films"], [])
+    old_stat = root.stat()
+    store.upsert_batch(lib, [("old.mkv", "film", 8, 100, 1.0)])
+
+    old_root = tmp_path / "old-mount"
+    root.rename(old_root)
+    root.mkdir()
+    (root / "new.mkv").write_bytes(b"replacement")
+    report = store.root_review(lib)
+    assert report["status"] == "changed"
+    assert report["indexed_files"] == 1
+    assert report["recorded"]["inode"] == old_stat.st_ino
+    current = report["current"]
+
+    with pytest.raises(ValueError, match="REAUTHORISE"):
+        store.reauthorise_root(lib, old_stat.st_dev, old_stat.st_ino,
+                               current["device"], current["inode"], "yes")
+    with pytest.raises(ValueError, match="changed during review"):
+        store.reauthorise_root(lib, old_stat.st_dev, -1,
+                               current["device"], current["inode"], "REAUTHORISE")
+    assert store.root_review(lib)["status"] == "changed"
+
+    store.reauthorise_root(lib, old_stat.st_dev, old_stat.st_ino,
+                           current["device"], current["inode"], "REAUTHORISE")
+    assert store.root_review(lib)["hold_prune"] is True
+    assert len(store.root_review(lib)["history"]) == 1
+
+    store.upsert_batch(lib, [("new.mkv", "film", 11, 101, 50.0)])
+    store.finalise_scan(lib, 40.0, current["device"], current["inode"])
+    assert {f["relative_path"] for f in store.files(lib)} == {"old.mkv", "new.mkv"}
+    assert store.root_review(lib)["hold_prune"] is False
+
+    store.finalise_scan(lib, 80.0, current["device"], current["inode"])
+    assert {f["relative_path"] for f in store.files(lib)} == set()
+    # The index was reconciled; no media file on either root was touched.
+    assert (old_root / "old.mkv").read_bytes() == b"original"
+    assert (root / "new.mkv").read_bytes() == b"replacement"
+
+
+def test_root_review_reports_unavailable_directory(tmp_path):
+    root = tmp_path / "films"
+    root.mkdir()
+    store = Catalogue(tmp_path / "state")
+    lib = store.add_library("Films", root, ["films"], [])
+    root.rename(tmp_path / "temporarily-gone")
+    assert store.root_review(lib)["status"] == "unavailable"
