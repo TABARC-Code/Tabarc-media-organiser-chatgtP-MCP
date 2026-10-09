@@ -45,9 +45,11 @@ def test_backup_rejects_media_folders_and_active_server(tmp_path):
     with pytest.raises(ValueError, match="absolute"):
         backup_catalogue(state, Path("relative.sqlite3"))
 
-    with TestClient(create_app(state), base_url="http://localhost"):
-        with pytest.raises(RuntimeError, match="already using"):
-            backup_catalogue(state, tmp_path / "busy.sqlite3")
+    with (
+        TestClient(create_app(state), base_url="http://localhost"),
+        pytest.raises(RuntimeError, match="already using"),
+    ):
+        backup_catalogue(state, tmp_path / "busy.sqlite3")
     assert not (tmp_path / "busy.sqlite3").exists()
     backup_catalogue(state, tmp_path / "after-close.sqlite3")
     assert (tmp_path / "after-close.sqlite3").is_file()
