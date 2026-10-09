@@ -14,6 +14,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field
 
 from .catalogue import Catalogue
+from .instance_lock import CatalogueLock
 from .scanner import Scanner
 
 ASSETS = Path(__file__).resolve().parent / "static"
@@ -64,13 +65,23 @@ def create_app(data_dir: Path | None = None):
         data_dir = Path(os.environ.get(
             "TABARC_DATA_DIR", "~/.local/share/tabarc-media-organiser"
         )).expanduser()
-    store = Catalogue(Path(data_dir))
+    # Take the exclusive lock *before* initialising the database. A second
+    # process mustn't mark a live scan as interrupted during startup.
+    catalogue_lock = CatalogueLock(Path(data_dir))
+    try:
+        store = Catalogue(Path(data_dir))
+    except BaseException:
+        catalogue_lock.close()
+        raise
     scanner = Scanner(store)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        yield
-        scanner.shutdown()
+        try:
+            yield
+        finally:
+            scanner.shutdown()
+            catalogue_lock.close()
 
     app = FastAPI(title="TABARC Media Organiser", version="0.1.0-alpha",
                   docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
