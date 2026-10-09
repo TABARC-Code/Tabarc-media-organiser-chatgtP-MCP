@@ -1,10 +1,9 @@
 import time
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 from tabarc_media.app import create_app, suggestions
-
 
 HEADERS = {"X-Tabarc-Local": "1"}
 
