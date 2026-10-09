@@ -36,6 +36,7 @@ def test_read_only_scan_rescan_and_symlink(tmp_path):
 
     job = scanner.start(lib)
     assert wait_for(store, job, {"completed", "failed"}) == "completed"
+    assert store.job(job)["changed"] == 2
     names = {f["relative_path"] for f in store.files(lib)}
     assert names == {"Season 01/Example.S01E01.mkv", "Season 01/Example.S01E01.srt"}
     assert video.read_bytes() == original_bytes
@@ -45,6 +46,7 @@ def test_read_only_scan_rescan_and_symlink(tmp_path):
     job2 = scanner.start(lib)
     assert wait_for(store, job2, {"completed", "failed"}) == "completed"
     assert len(store.files(lib)) == 1
+    assert store.job(job2)["changed"] == 0
     assert video.read_bytes() == original_bytes
     scanner.shutdown()
 
@@ -80,4 +82,27 @@ def test_selected_media_types_filter_unrelated_files(tmp_path):
     job = scanner.start(lib)
     assert wait_for(store, job, {"completed", "failed"}) == "completed"
     assert {f["relative_path"] for f in store.files(lib)} == {"novel.epub", "book.opf"}
+    scanner.shutdown()
+
+
+def test_changed_root_fails_without_pruning_index(tmp_path):
+    root = tmp_path / "media"
+    root.mkdir()
+    film = root / "film.mkv"
+    film.write_bytes(b"original")
+    store = Catalogue(tmp_path / "state")
+    lib = store.add_library("Films", root, ["films"], [])
+    scanner = Scanner(store)
+    first = scanner.start(lib)
+    assert wait_for(store, first, {"completed", "failed"}) == "completed"
+    assert len(store.files(lib)) == 1
+    original = tmp_path / "old-root"
+    root.rename(original)
+    root.mkdir()
+    (root / "impostor.mkv").write_bytes(b"different")
+    second = scanner.start(lib)
+    assert wait_for(store, second, {"completed", "failed"}) == "failed"
+    assert {f["relative_path"] for f in store.files(lib)} == {"film.mkv"}
+    assert "identity changed" in store.job(second)["message"]
+    assert (original / "film.mkv").read_bytes() == b"original"
     scanner.shutdown()
