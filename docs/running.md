@@ -67,6 +67,17 @@ For a non-default catalogue location, also specify `--data-dir /path/to/state`. 
 
 Backups cannot run while the server holds the catalogue lock. Restoring a snapshot is not yet supported through the interface; keep the original and the exported copy until a tested restore and migration procedure exists.
 
+## Measuring scanner overhead
+
+A disposable benchmark is included for comparing the three scan profiles without using real media. It creates tiny placeholder files in a temporary directory, indexes them twice and prints wall time, process CPU time, throughput and changed-record counts.
+
+```bash
+python tools/benchmark_scanner.py --files 2000 --profile quiet
+python tools/benchmark_scanner.py --files 2000 --profile balanced
+```
+
+These numbers only measure the small-file inventory path on the current machine. They do not establish NAS performance, actual disk-I/O bandwidth, large-video parsing overhead or impact on Plex/Jellyfin playback. The profiles currently add pauses between batches; automatic media-server-idle detection is still planned.
+
 ## Limitations
 
 - A server-side directory picker, media database lookups, metadata sidecars, duplicate detection, watcher service, API keys, AI/MCP connections and Plex/Jellyfin refreshes are not available yet.
