@@ -28,6 +28,14 @@ class LibraryInput(BaseModel):
     scan_profile: str = "balanced"
 
 
+class RootConfirmation(BaseModel):
+    previous_device: int | None
+    previous_inode: int | None
+    new_device: int
+    new_inode: int
+    confirmation: str
+
+
 def suggestions(files: list[dict]):
     """Never authoritative: these are filename guesses, not provider matches."""
     output = []
@@ -141,6 +149,23 @@ def create_app(data_dir: Path | None = None):
         except (ValueError, OSError) as exc:
             raise HTTPException(400, str(exc)) from exc
         return store.library(lib_id)
+
+    @app.get("/api/libraries/{library_id}/root-review")
+    def root_review(library_id: int):
+        try:
+            return store.root_review(library_id)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.post("/api/libraries/{library_id}/root-authorisation")
+    def root_authorisation(library_id: int, payload: RootConfirmation):
+        try:
+            return scanner.reauthorise_root(
+                library_id, payload.previous_device, payload.previous_inode,
+                payload.new_device, payload.new_inode, payload.confirmation
+            )
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     @app.get("/api/libraries/{library_id}/files")
     def list_files(library_id: int, limit: int = Query(100, ge=1, le=500),
