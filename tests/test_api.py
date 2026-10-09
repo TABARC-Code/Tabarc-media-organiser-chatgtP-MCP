@@ -1,5 +1,6 @@
 import time
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tabarc_media.app import create_app, suggestions
@@ -68,3 +69,14 @@ def test_unverified_suggestions_are_never_transactions():
     assert len(proposals) == 2
     assert all(p["status"] == "review_required" for p in proposals)
     assert proposals[0]["suggested_name"] == "Show Name - S01E03.mkv"
+
+
+def test_only_one_server_can_open_a_catalogue(tmp_path):
+    first = create_app(tmp_path / "state")
+    with TestClient(first, base_url="http://localhost") as client:
+        assert client.get("/api/status").status_code == 200
+        with pytest.raises(RuntimeError, match="already using"):
+            create_app(tmp_path / "state")
+    # The file lock is released when the server shuts down.
+    with TestClient(create_app(tmp_path / "state"), base_url="http://localhost") as second:
+        assert second.get("/api/status").status_code == 200
