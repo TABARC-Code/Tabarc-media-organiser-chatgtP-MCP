@@ -1,7 +1,6 @@
 """SQLite catalogue. Media itself is never written by this module."""
 
 import json
-import os
 from contextlib import contextmanager
 import sqlite3
 import threading
